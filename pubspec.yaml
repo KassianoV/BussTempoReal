@@ -1,0 +1,27 @@
+name: buss_temporeal
+description: "Um aplicativo de rastreamento de ônibus."
+# A linha a seguir impede a publicação acidental no pub.dev.
+publish_to: 'none' 
+
+version: 1.0.0+1
+
+# ADICIONE OU EDITE ESTA SEÇÃO AQUI
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_map: 8.1.1           # Para os mapas
+  latlong2: 0.9.1
+  provider: ^6.0.5             # Para gerenciamento de estado
+  mqtt_client: ^10.10.0        # Para comunicação MQTT
+  geolocator: ^14.0.2          # Para localização
+                               
+# Seção de configuração do Flutter
+flutter:
+  uses-material-design: true
+
+  # Seção de assets
+  assets:
+    - assets/
