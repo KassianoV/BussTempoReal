@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart'; // 1. Importe o flutter_map
-import 'package:latlong2/latlong.dart'; // 2. Importe o latlong2
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
+import 'package:mqtt_client/mqtt_client.dart';
+
 import '../auth_provider.dart';
+import '../mqtt_service.dart';
 
 class StudentMapScreen extends StatefulWidget {
   @override
@@ -10,16 +14,54 @@ class StudentMapScreen extends StatefulWidget {
 }
 
 class _StudentMapScreenState extends State<StudentMapScreen> {
-  // Posição inicial simulada
-  final LatLng _initialPosition = LatLng(-22.9068, -43.1729);
+  late MqttService mqttService;
+  StreamSubscription? mqttSubscription;
 
-  // Marcador do ônibus que seria atualizado via MQTT
-  final Marker _busMarker = Marker(
-    width: 80.0,
-    height: 80.0,
-    point: LatLng(-22.9068, -43.1729), // Posição inicial
-    child: Icon(Icons.directions_bus, color: Colors.green, size: 40),
-  );
+  final LatLng _mapCenter = LatLng(-22.9068, -43.1729);
+  LatLng? _busPosition;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupMqtt();
+  }
+
+  void _setupMqtt() async {
+    final clientId = 'student-${DateTime.now().millisecondsSinceEpoch}';
+    mqttService = MqttService(clientIdentifier: clientId);
+    await mqttService.connect();
+
+    if (mounted &&
+        mqttService.client?.connectionStatus?.state ==
+            MqttConnectionState.connected) {
+      const topic = 'uff/onibus/UFF-01/localizacao';
+      mqttService.subscribeToTopic(topic);
+
+      mqttSubscription =
+          mqttService.locationStream.listen((String locationData) {
+        final parts = locationData.split(',');
+        if (parts.length == 2) {
+          final lat = double.tryParse(parts[0]);
+          final lng = double.tryParse(parts[1]);
+
+          if (lat != null && lng != null) {
+            if (mounted) {
+              setState(() {
+                _busPosition = LatLng(lat, lng);
+              });
+            }
+          }
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    mqttSubscription?.cancel();
+    mqttService.disconnect();
+    super.dispose();
+  }
 
   void _logout() {
     Provider.of<AuthProvider>(context, listen: false).logout();
@@ -28,7 +70,10 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final routeName = ModalRoute.of(context)!.settings.arguments as String;
+    // A linha abaixo pode causar erro se a rota for acessada sem argumentos.
+    // Em um app real, teríamos um tratamento de erro melhor aqui.
+    final routeName = ModalRoute.of(context)?.settings.arguments as String? ??
+        "Rota Desconhecida";
 
     return Scaffold(
       appBar: AppBar(
@@ -37,17 +82,16 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
           TextButton(
             onPressed: _logout,
             child: Text('Sair', style: TextStyle(color: Colors.white)),
-          ),
+          )
         ],
       ),
       body: Column(
         children: [
           _buildInfoPanel(routeName),
-          // 3. Substitua o GoogleMap pelo FlutterMap
           Expanded(
             child: FlutterMap(
               options: MapOptions(
-                initialCenter: _initialPosition,
+                initialCenter: _mapCenter,
                 initialZoom: 14,
               ),
               children: [
@@ -55,10 +99,18 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.buss_temporeal',
                 ),
-                // Camada de Marcadores
-                MarkerLayer(
-                  markers: [_busMarker], // Exibe o marcador do ônibus
-                ),
+                if (_busPosition != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        width: 80.0,
+                        height: 80.0,
+                        point: _busPosition!,
+                        child: Icon(Icons.directions_bus,
+                            color: Colors.green, size: 40),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -68,7 +120,8 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
     );
   }
 
-  // O resto do código (_buildInfoPanel, _buildStopsPanel, etc.) continua o mesmo.
+  // --- MÉTODOS DE UI QUE ESTAVAM FALTANDO ---
+
   Widget _buildInfoPanel(String routeName) {
     return Padding(
       padding: const EdgeInsets.all(12.0),
@@ -81,32 +134,29 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    routeName,
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                  ),
-                  Text(
-                    'Ônibus UFF-01',
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
+                  Text(routeName,
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  Text('Ônibus UFF-01',
+                      style: TextStyle(color: Colors.grey[600])),
                 ],
               ),
               Chip(
                 label: Text('ONLINE'),
                 backgroundColor: Colors.green.shade100,
                 labelStyle: TextStyle(color: Colors.green.shade800),
-              ),
+              )
             ],
           ),
           SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildInfoMetric('2 min', 'até próxima parada'),
-              _buildInfoMetric('68%', 'ocupação'),
-              _buildInfoMetric('8:25', 'chegada estimada'),
+              _buildInfoMetric('~', 'até próxima parada'),
+              _buildInfoMetric('~', 'ocupação'),
+              _buildInfoMetric('~', 'chegada estimada'),
             ],
-          ),
+          )
         ],
       ),
     );
@@ -115,10 +165,8 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
   Widget _buildInfoMetric(String value, String label) {
     return Column(
       children: [
-        Text(
-          value,
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
+        Text(value,
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
       ],
     );
@@ -130,35 +178,21 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Próximas Paradas',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
+          Text('Próximas Paradas',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           SizedBox(height: 12),
-          _buildStopItem(
-            '1',
-            'Terminal Centro',
-            'Chegando em 2 min',
-            isActive: true,
-          ),
+          _buildStopItem('1', 'Terminal Centro', 'Horário indisponível',
+              isActive: true),
           SizedBox(height: 8),
-          _buildStopItem(
-            '2',
-            'Ponto da Rua XV',
-            'Chegando em 8 min',
-            isActive: false,
-          ),
+          _buildStopItem('2', 'Ponto da Rua XV', 'Horário indisponível',
+              isActive: false),
         ],
       ),
     );
   }
 
-  Widget _buildStopItem(
-    String number,
-    String name,
-    String eta, {
-    bool isActive = false,
-  }) {
+  Widget _buildStopItem(String number, String name, String eta,
+      {bool isActive = false}) {
     return Opacity(
       opacity: isActive ? 1.0 : 0.6,
       child: Row(
@@ -166,23 +200,17 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
           CircleAvatar(
             radius: 16,
             backgroundColor: isActive ? Colors.blue : Colors.grey[400],
-            child: Text(
-              number,
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            child: Text(number,
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
           ),
           SizedBox(width: 12),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(name, style: TextStyle(fontWeight: FontWeight.w600)),
-              Text(
-                eta,
-                style: TextStyle(color: Colors.grey[700], fontSize: 12),
-              ),
+              Text(eta,
+                  style: TextStyle(color: Colors.grey[700], fontSize: 12)),
             ],
           ),
         ],
