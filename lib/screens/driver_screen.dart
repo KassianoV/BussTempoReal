@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
-import 'package:mqtt_client/mqtt_client.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../auth_provider.dart';
@@ -17,7 +16,7 @@ class DriverScreen extends StatefulWidget {
 class _DriverScreenState extends State<DriverScreen> {
   late MqttService mqttService;
 
-  bool _isMqttConnected = false;
+  // Revertido: Removemos a variável _isMqttConnected
   bool _isSharing = false;
 
   LatLng? _currentPosition;
@@ -26,8 +25,16 @@ class _DriverScreenState extends State<DriverScreen> {
   @override
   void initState() {
     super.initState();
-    _setupMqtt();
+    _setupMqtt(); // A configuração do MQTT continua aqui
     _determinePosition();
+  }
+
+  // A configuração do MQTT continua a mesma, mas não atualiza mais o estado da UI
+  void _setupMqtt() async {
+    final clientId = 'driver-UFF-01-${DateTime.now().millisecondsSinceEpoch}';
+    mqttService = MqttService(clientIdentifier: clientId);
+    await mqttService.connect();
+    // A verificação do status e o setState foram removidos daqui
   }
 
   Future<void> _determinePosition() async {
@@ -36,7 +43,7 @@ class _DriverScreenState extends State<DriverScreen> {
 
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled)
-      return Future.error('Serviços de localização estão desabilitados.');
+      return Future.error('Serviços de localização desabilitados.');
 
     permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -46,27 +53,12 @@ class _DriverScreenState extends State<DriverScreen> {
     }
 
     if (permission == LocationPermission.deniedForever)
-      return Future.error(
-          'Permissão de localização foi negada permanentemente.');
+      return Future.error('Permissão de localização negada permanentemente.');
 
     Position position = await Geolocator.getCurrentPosition();
     if (mounted) {
       setState(() {
         _currentPosition = LatLng(position.latitude, position.longitude);
-      });
-    }
-  }
-
-  void _setupMqtt() async {
-    final clientId = 'driver-UFF-01-${DateTime.now().millisecondsSinceEpoch}';
-    mqttService = MqttService(clientIdentifier: clientId);
-    await mqttService.connect();
-
-    if (mounted &&
-        mqttService.client?.connectionStatus?.state ==
-            MqttConnectionState.connected) {
-      setState(() {
-        _isMqttConnected = true;
       });
     }
   }
@@ -79,6 +71,8 @@ class _DriverScreenState extends State<DriverScreen> {
   }
 
   void _toggleSharing() {
+    // A lógica de publicação agora não verifica mais se o MQTT está conectado,
+    // ela simplesmente tenta publicar. O status da conexão veremos no console.
     if (!_isSharing) {
       final locationSettings = LocationSettings(
         accuracy: LocationAccuracy.high,
@@ -93,11 +87,9 @@ class _DriverScreenState extends State<DriverScreen> {
           });
         }
 
-        if (_isMqttConnected) {
-          const topic = 'uff/onibus/UFF-01/localizacao';
-          final message = '${position.latitude},${position.longitude}';
-          mqttService.publishMessage(topic, message);
-        }
+        const topic = 'uff/onibus/UFF-01/localizacao';
+        final message = '${position.latitude},${position.longitude}';
+        mqttService.publishMessage(topic, message);
       });
     } else {
       _positionStreamSubscription?.cancel();
@@ -163,21 +155,12 @@ class _DriverScreenState extends State<DriverScreen> {
                     ],
                   ),
           ),
+          // Revertido: Painel inferior sem o texto de status e com o botão sempre ativo
           Padding(
-            padding: const EdgeInsets.all(16.0), // Padding corrigido
+            padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(
-                  child: Text(
-                    _isMqttConnected ? 'MQTT Conectado' : 'MQTT Conectando...',
-                    style: TextStyle(
-                      color: _isMqttConnected ? Colors.green : Colors.orange,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -200,14 +183,14 @@ class _DriverScreenState extends State<DriverScreen> {
                     'Ative para compartilhar sua localização em tempo real com os alunos.'),
                 SizedBox(height: 16),
                 ElevatedButton(
-                  onPressed: _isMqttConnected ? _toggleSharing : null,
+                  onPressed: _toggleSharing, // Botão sempre ativo
                   child: Text(_isSharing
                       ? 'Desativar Compartilhamento'
                       : 'Ativar Compartilhamento'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _isMqttConnected
-                        ? (_isSharing ? Colors.green : Colors.red)
-                        : Colors.grey,
+                    backgroundColor: _isSharing
+                        ? Colors.green
+                        : Colors.red, // A cor só depende do _isSharing
                     foregroundColor: Colors.white,
                     padding: EdgeInsets.symmetric(vertical: 16),
                   ),
